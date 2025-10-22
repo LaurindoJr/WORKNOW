@@ -4,6 +4,9 @@ from flask import Flask, request, render_template, redirect, url_for, flash
 import psycopg2, psycopg2.extras
 import boto3
 
+from typing import Optional
+
+
 # ---------- Config ----------
 DB = {
     "host": os.environ["RDS_HOST"],
@@ -32,7 +35,7 @@ def log_audit(action, data):
         "data": data
     })
 
-def thumb_from(image_key: str | None) -> str | None:
+def thumb_from(image_key: Optional[str]) -> Optional[str]:
     """Dado o key original no S3, retorna o key esperado da thumbnail (ou None)."""
     if not image_key:
         return None
