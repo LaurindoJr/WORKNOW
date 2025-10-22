@@ -10,9 +10,9 @@
       <td>{{ b.title }}</td>
       <td>{{ b.author }}</td>
       <td>
-        {% set st = statuses.get(b.id) %}
-        {% if st and st.thumbnail_key %}
-          <img src="https://{{bucket}}.s3.amazonaws.com/{{st.thumbnail_key}}" style="height:60px">
+        {% set tkey = thumbs.get(b.id) %}
+        {% if tkey %}
+          <img src="https://{{bucket}}.s3.amazonaws.com/{{tkey}}" style="height:60px">
         {% else %}—{% endif %}
       </td>
       <td>

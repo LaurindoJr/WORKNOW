@@ -4,8 +4,8 @@
 <p><b>Autor:</b> {{ book.author }}</p>
 <p>{{ book.summary or '' }}</p>
 
-{% if status and status.thumbnail_key %}
-  <img src="https://{{bucket}}.s3.amazonaws.com/{{status.thumbnail_key}}" style="height:150px">
+{% if thumb_key %}
+  <img src="https://{{bucket}}.s3.amazonaws.com/{{thumb_key}}" style="height:150px">
 {% elif book.image_key %}
   <p>Processando imagem…</p>
 {% endif %}

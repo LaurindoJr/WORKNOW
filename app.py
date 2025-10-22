@@ -1,4 +1,3 @@
-
 import os, json, uuid
 from datetime import date
 from flask import Flask, request, render_template, redirect, url_for, flash
@@ -13,23 +12,33 @@ DB = {
     "password": os.environ["RDS_PASS"],
     "port": 5432,
 }
-AWS_REGION   = os.getenv("AWS_REGION", "us-east-1")
-S3_BUCKET    = os.environ["S3_BUCKET"]
-SNS_TOPIC_ARN= os.environ["SNS_TOPIC_ARN"]
-DDB_AUDIT    = os.getenv("DDB_AUDIT", "kcl-AuditLogs")
-DDB_STATUS   = os.getenv("DDB_STATUS", "ProcessingStatus")
+AWS_REGION    = os.getenv("AWS_REGION", "us-east-1")
+S3_BUCKET     = os.environ["S3_BUCKET"]
+SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
+DDB_AUDIT     = os.getenv("DDB_AUDIT", "kcl-AuditLogs")
 
-s3        = boto3.client("s3", region_name=AWS_REGION)
-sns       = boto3.client("sns", region_name=AWS_REGION)
-dynamo    = boto3.resource("dynamodb", region_name=AWS_REGION)
+s3     = boto3.client("s3", region_name=AWS_REGION)
+sns    = boto3.client("sns", region_name=AWS_REGION)
+dynamo = boto3.resource("dynamodb", region_name=AWS_REGION)
 audit_tbl = dynamo.Table(DDB_AUDIT)
-status_tbl= dynamo.Table(DDB_STATUS)
 
 def db_conn():
     return psycopg2.connect(cursor_factory=psycopg2.extras.RealDictCursor, **DB)
 
 def log_audit(action, data):
-    audit_tbl.put_item(Item={"pk": f"APP#{action}", "sk": str(uuid.uuid4()), "data": data})
+    audit_tbl.put_item(Item={
+        "pk": f"APP#{action}",
+        "sk": str(uuid.uuid4()),
+        "data": data
+    })
+
+def thumb_from(image_key: str | None) -> str | None:
+    """Dado o key original no S3, retorna o key esperado da thumbnail (ou None)."""
+    if not image_key:
+        return None
+    base = image_key.split("/")[-1]
+    name_noext = base.rsplit(".", 1)[0]
+    return f"thumbs/{name_noext}.jpg"
 
 # ---------- App ----------
 app = Flask(__name__)
@@ -40,15 +49,10 @@ def index():
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM books ORDER BY id DESC")
         books = cur.fetchall()
-    # carrega status/thumbnail do DDB
-    statuses = {}
-    for b in books:
-        try:
-            r = status_tbl.get_item(Key={"pk": str(b["id"])})
-            statuses[b["id"]] = r.get("Item", {})
-        except Exception:
-            statuses[b["id"]] = {}
-    return render_template("index.html", books=books, statuses=statuses, bucket=S3_BUCKET)
+
+    # mapa id -> thumb_key (se existir imagem original)
+    thumbs = {b["id"]: thumb_from(b.get("image_key")) for b in books}
+    return render_template("index.html", books=books, thumbs=thumbs, bucket=S3_BUCKET)
 
 @app.route("/books/new")
 def new_book():
@@ -56,10 +60,10 @@ def new_book():
 
 @app.route("/books", methods=["POST"])
 def create_book():
-    code   = request.form["code"].strip()
-    title  = request.form["title"].strip()
-    author = request.form["author"].strip()
-    summary= request.form.get("summary","").strip()
+    code    = request.form["code"].strip()
+    title   = request.form["title"].strip()
+    author  = request.form["author"].strip()
+    summary = request.form.get("summary","").strip()
 
     image_key = None
     file = request.files.get("image")
@@ -75,9 +79,16 @@ def create_book():
         book_id = cur.fetchone()["id"]
 
     if image_key:
-        # dispara evento para a Lambda via SNS
-        sns.publish(TopicArn=SNS_TOPIC_ARN,
-                    Message=json.dumps({"book_id": str(book_id), "imageKey": image_key}))
+        # publica no SNS com o payload que a Lambda espera (bucket + key)
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Message=json.dumps({
+                "book_id": str(book_id),
+                "bucket": S3_BUCKET,
+                "key": image_key
+            })
+        )
+
     log_audit("CREATE", {"book_id": book_id, "code": code})
     flash("Livro criado!", "success")
     return redirect(url_for("index"))
@@ -89,8 +100,9 @@ def show_book(book_id):
         book = cur.fetchone()
         cur.execute("SELECT * FROM rentals WHERE book_id=%s ORDER BY id DESC", (book_id,))
         rentals = cur.fetchall()
-    status = status_tbl.get_item(Key={"pk": str(book_id)}).get("Item")
-    return render_template("book_detail.html", book=book, rentals=rentals, status=status, bucket=S3_BUCKET)
+
+    thumb_key = thumb_from(book["image_key"]) if book and book.get("image_key") else None
+    return render_template("book_detail.html", book=book, rentals=rentals, thumb_key=thumb_key, bucket=S3_CART_BUCKET if False else S3_BUCKET)
 
 @app.route("/books/<int:book_id>/edit")
 def edit_book(book_id):
@@ -101,9 +113,9 @@ def edit_book(book_id):
 
 @app.route("/books/<int:book_id>", methods=["POST"])
 def update_book(book_id):
-    title  = request.form["title"].strip()
-    author = request.form["author"].strip()
-    summary= request.form.get("summary","").strip()
+    title   = request.form["title"].strip()
+    author  = request.form["author"].strip()
+    summary = request.form.get("summary","").strip()
 
     new_key = None
     file = request.files.get("image")
@@ -113,15 +125,26 @@ def update_book(book_id):
 
     with db_conn() as conn, conn.cursor() as cur:
         if new_key:
-            cur.execute("UPDATE books SET title=%s,author=%s,summary=%s,image_key=%s WHERE id=%s",
-                        (title, author, summary, new_key, book_id))
+            cur.execute(
+                "UPDATE books SET title=%s,author=%s,summary=%s,image_key=%s WHERE id=%s",
+                (title, author, summary, new_key, book_id)
+            )
         else:
-            cur.execute("UPDATE books SET title=%s,author=%s,summary=%s WHERE id=%s",
-                        (title, author, summary, book_id))
+            cur.execute(
+                "UPDATE books SET title=%s,author=%s,summary=%s WHERE id=%s",
+                (title, author, summary, book_id)
+            )
 
     if new_key:
-        sns.publish(TopicArn=SNS_TOPIC_ARN,
-                    Message=json.dumps({"book_id": str(book_id), "imageKey": new_key}))
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Message=json.dumps({
+                "book_id": str(book_id),
+                "bucket": S3_BUCKET,
+                "key": new_key
+            })
+        )
+
     log_audit("UPDATE", {"book_id": book_id})
     flash("Livro atualizado!", "success")
     return redirect(url_for("show_book", book_id=book_id))
@@ -139,8 +162,10 @@ def delete_book(book_id):
 def rent_book(book_id):
     renter = request.form["renter"].strip()
     with db_conn() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO rentals (book_id,renter,start_date,status) VALUES (%s,%s,%s,'OPEN')",
-                    (book_id, renter, date.today()))
+        cur.execute(
+            "INSERT INTO rentals (book_id,renter,start_date,status) VALUES (%s,%s,%s,'OPEN')",
+            (book_id, renter, date.today())
+        )
     log_audit("RENT", {"book_id": book_id, "renter": renter})
     flash("Aluguel criado!", "success")
     return redirect(url_for("show_book", book_id=book_id))
