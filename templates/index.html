@@ -1,27 +1,43 @@
 {% extends "layout.html" %}{% block content %}
-<p><a class="button primary" href="{{ url_for('new_book') }}">➕ Novo livro</a></p>
+<p>
+  <a class="button primary" href="{{ url_for('new_book') }}">➕ Novo livro</a>
+</p>
+
 <table>
-  <thead><tr><th>ID</th><th>Código</th><th>Título</th><th>Autor</th><th>Thumb</th><th>Ações</th></tr></thead>
+  <thead>
+  <tr>
+    <th>ID</th>
+    <th>Código</th>
+    <th>Título</th>
+    <th>Autor</th>
+    <th>Thumb</th>
+    <th>Ações</th>
+  </tr>
+  </thead>
   <tbody>
   {% for b in books %}
-    <tr>
-      <td>{{ b.id }}</td>
-      <td>{{ b.code }}</td>
-      <td>{{ b.title }}</td>
-      <td>{{ b.author }}</td>
-      <td>
-        {% set tkey = thumbs.get(b.id) %}
-        {% if tkey %}
-          <img src="https://{{bucket}}.s3.amazonaws.com/{{tkey}}" style="height:60px">
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        <a class="button" href="{{ url_for('show_book', book_id=b.id) }}">Ver</a>
-        <form style="display:inline" method="post" action="{{ url_for('delete_book', book_id=b.id) }}">
-          <button class="secondary" onclick="return confirm('Excluir?')">Excluir</button>
-        </form>
-      </td>
-    </tr>
+  <tr>
+    <td>{{ b.id }}</td>
+    <td>{{ b.code }}</td>
+    <td>{{ b.title }}</td>
+    <td>{{ b.author }}</td>
+    <td>
+      {% set turl = thumbs.get(b.id) %}
+      {% if turl %}
+      <img class="thumb" src="{{ turl }}" alt="thumb {{ b.title }}">
+      {% else %}
+      —
+      {% endif %}
+    </td>
+    <td>
+      <a class="button" href="{{ url_for('show_book', book_id=b.id) }}">Ver</a>
+      <form style="display:inline" method="post"
+            action="{{ url_for('delete_book', book_id=b.id) }}"
+            onsubmit="return confirm('Excluir?')">
+        <button class="secondary">Excluir</button>
+      </form>
+    </td>
+  </tr>
   {% endfor %}
   </tbody>
 </table>

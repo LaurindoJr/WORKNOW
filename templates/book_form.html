@@ -1,11 +1,17 @@
 {% extends "layout.html" %}{% block content %}
+<p><a href="{{ url_for('index') }}">← Voltar</a></p>
+
 <form method="post" enctype="multipart/form-data"
       action="{{ url_for('create_book') if not book else url_for('update_book', book_id=book.id) }}">
-  {% if not book %}<label>Código <input name="code" required></label>{% endif %}
+  {% if not book %}
+  <label>Código <input name="code" required></label>
+  {% endif %}
+
   <label>Título <input name="title" value="{{ book.title if book else '' }}" required></label>
   <label>Autor <input name="author" value="{{ book.author if book else '' }}" required></label>
   <label>Resumo <textarea name="summary">{{ book.summary if book else '' }}</textarea></label>
   <label>Imagem <input type="file" name="image" accept="image/*"></label>
-  <button class="primary">Salvar</button>
+
+  <p><button class="primary">Salvar</button></p>
 </form>
 {% endblock %}

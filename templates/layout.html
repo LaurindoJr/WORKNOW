@@ -4,16 +4,29 @@
   <meta charset="utf-8">
   <title>Biblioteca na Nuvem</title>
   <link rel="stylesheet" href="https://unpkg.com/missing.css@1.1.3">
+  <style>
+    .messages { list-style: none; padding-left: 0; }
+    .messages li { padding: 8px 12px; margin: 6px 0; border-radius: 6px; }
+    .messages .success { background:#e6ffed; }
+    .messages .info    { background:#eef6ff; }
+    .messages .error   { background:#ffecec; }
+    .button { margin-right: 4px; }
+    img.thumb { height:60px; border-radius:6px; }
+  </style>
 </head>
 <body class="container">
-  <header><h1>📚 Biblioteca na Nuvem</h1></header>
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    <ul class="messages">
-      {% for cat, msg in messages %}<li class="{{cat}}">{{msg}}</li>{% endfor %}
-    </ul>
-    {% endif %}
-  {% endwith %}
-  {% block content %}{% endblock %}
+<header><h1>📚 Biblioteca na Nuvem</h1></header>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<ul class="messages">
+  {% for cat, msg in messages %}
+  <li class="{{ cat }}">{{ msg }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endwith %}
+
+{% block content %}{% endblock %}
 </body>
 </html>
