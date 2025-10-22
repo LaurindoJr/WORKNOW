@@ -53,7 +53,7 @@ def thumb_from(image_key: Optional[str]) -> Optional[str]:
         return None
     base = image_key.split("/")[-1]
     name_noext = base.rsplit(".", 1)[0]
-    return f"thumbs/{name_noext}.jpg"
+    return f"thumb/{name_noext}.jpg"
 
 # ---------- App ----------
 app = Flask(__name__)
