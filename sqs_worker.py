@@ -3,6 +3,8 @@ import os, json, io
 from datetime import datetime, timezone
 import boto3
 from PIL import Image
+from typing import Optional  # adicione no topo do arquivo, logo após os imports
+
 
 # ===== Config via ambiente =====
 REGION       = os.getenv("AWS_REGION", "us-east-1")
@@ -46,7 +48,7 @@ def _status_key(s3_key: str):
         return {STATUS_PK_NAME: pk_val, STATUS_SK_NAME: sk_val}
     return {STATUS_PK_NAME: pk_val}
 
-def _audit_key(action: str, s3_key: str | None = None):
+def _audit_key(action: str, s3_key: Optional[str] = None):
     base = action if s3_key is None else f"{action}#{s3_key}"
     pk_val = f"{AUDIT_PK_PREFIX}{base}" if AUDIT_PK_PREFIX else base
     if AUDIT_SK_NAME:
@@ -55,7 +57,7 @@ def _audit_key(action: str, s3_key: str | None = None):
     return {AUDIT_PK_NAME: pk_val}
 
 # ----- Dynamo helpers -----
-def update_status(key: str, status: str, info: dict | None = None):
+def update_status(key: str, status: str, info: Optional[dict] = None):
     status_tb.update_item(
         Key=_status_key(key),
         UpdateExpression="SET #s=:s, info=:i, updated_at=:t",
@@ -67,7 +69,7 @@ def update_status(key: str, status: str, info: dict | None = None):
         },
     )
 
-def log_audit(action: str, data: dict, s3_key: str | None = None):
+def log_audit(action: str, data: dict, s3_key: Optional[str] = None):
     item = _audit_key(action, s3_key)
     item.update({
         "action": action,
