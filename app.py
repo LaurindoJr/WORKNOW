@@ -6,6 +6,7 @@ from flask import Flask, request, render_template, redirect, url_for, flash
 import psycopg2
 import psycopg2.extras
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 # ---------- Config ----------
 DB = {
@@ -16,14 +17,14 @@ DB = {
     "port": 5432,
 }
 
-AWS_REGION    = os.getenv("AWS_REGION", "us-east-1")
-S3_BUCKET     = os.environ["S3_BUCKET"]
-SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
-DDB_AUDIT     = os.getenv("DDB_AUDIT", "kcl-AuditLogs")
+AWS_REGION   = os.getenv("AWS_REGION", "us-east-1")
+S3_BUCKET    = os.environ["S3_BUCKET"]
+DDB_AUDIT    = os.getenv("DDB_AUDIT", "kcl-AuditLogs")
+QUEUE_URL    = os.environ["QUEUE_URL"]  # URL completa da SQS (não é ARN)
 
-s3      = boto3.client("s3", region_name=AWS_REGION)
-sns     = boto3.client("sns", region_name=AWS_REGION)
-dynamo  = boto3.resource("dynamodb", region_name=AWS_REGION)
+s3       = boto3.client("s3", region_name=AWS_REGION)
+sqs      = boto3.client("sqs", region_name=AWS_REGION)
+dynamo   = boto3.resource("dynamodb", region_name=AWS_REGION)
 audit_tbl = dynamo.Table(DDB_AUDIT)
 
 # ---------- Helpers ----------
@@ -33,6 +34,12 @@ def db_conn():
     )
 
 def log_audit(action: str, data: dict):
+    """
+    Grava auditoria no DynamoDB (kcl-AuditLogs).
+    Sua tabela usa PK+SK (pk/sk, ambos string). Vamos usar:
+      pk = "APP#<ACTION>"
+      sk = uuid4()
+    """
     audit_tbl.put_item(Item={
         "pk": f"APP#{action}",
         "sk": str(uuid.uuid4()),
@@ -55,9 +62,38 @@ def thumb_from(image_key: Optional[str]) -> Optional[str]:
     name_noext = base.rsplit(".", 1)[0]
     return f"thumb/{name_noext}.jpg"
 
+def enqueue_image(s3_key: str, book_id: Optional[int] = None):
+    """
+    Publica uma mensagem na SQS para o worker processar a imagem.
+    Formato esperado pelo worker: {"bucket": ..., "key": ...}
+    (book_id é opcional — útil para auditoria/trace)
+    """
+    payload = {
+        "bucket": S3_BUCKET,
+        "key": s3_key,
+    }
+    if book_id is not None:
+        payload["book_id"] = str(book_id)
+
+    try:
+        sqs.send_message(
+            QueueUrl=QUEUE_URL,
+            MessageBody=json.dumps(payload)
+        )
+    except (BotoCoreError, ClientError) as e:
+        # Não quebra o fluxo do usuário; só registra um aviso
+        log_audit("SQS_PUBLISH_ERROR", {"error": str(e), "payload": payload})
+        # opcional: mostre um aviso na UI
+        # flash("Aviso: não foi possível enfileirar o processamento da imagem. Tente novamente.", "warning")
+
 # ---------- App ----------
 app = Flask(__name__)
 app.secret_key = os.urandom(16)
+
+# Health (opcional para checagem rápida)
+@app.route("/health")
+def health():
+    return {"ok": True}, 200
 
 # Home / Lista
 @app.route("/")
@@ -113,16 +149,9 @@ def create_book():
         )
         book_id = cur.fetchone()["id"]
 
-    # dispara processamento assíncrono da thumb
+    # dispara processamento assíncrono da thumb via SQS
     if image_key:
-        sns.publish(
-            TopicArn=SNS_TOPIC_ARN,
-            Message=json.dumps({
-                "book_id": str(book_id),
-                "bucket": S3_BUCKET,
-                "key": image_key
-            })
-        )
+        enqueue_image(image_key, book_id=book_id)
 
     log_audit("CREATE", {"book_id": book_id, "code": code})
     flash("Livro criado!", "success")
@@ -191,14 +220,7 @@ def update_book(book_id):
             )
 
     if new_key:
-        sns.publish(
-            TopicArn=SNS_TOPIC_ARN,
-            Message=json.dumps({
-                "book_id": str(book_id),
-                "bucket": S3_BUCKET,
-                "key": new_key
-            })
-        )
+        enqueue_image(new_key, book_id=book_id)
 
     log_audit("UPDATE", {"book_id": book_id})
     flash("Livro atualizado!", "success")
