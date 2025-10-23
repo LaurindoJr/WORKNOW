@@ -35,8 +35,7 @@ def db_conn():
 
 def log_audit(action: str, data: dict):
     """
-    Grava auditoria no DynamoDB (kcl-AuditLogs).
-    Sua tabela usa PK+SK (pk/sk, ambos string). Vamos usar:
+    Auditoria em kcl-AuditLogs (PK+SK).
       pk = "APP#<ACTION>"
       sk = uuid4()
     """
@@ -54,43 +53,33 @@ def s3_presigned_url(bucket: str, key: str, minutes: int = 60) -> str:
         ExpiresIn=minutes * 60,
     )
 
-def thumb_from(image_key: Optional[str]) -> Optional[str]:
-    """Dado o key original no S3, retorna o key esperado da thumbnail (ou None)."""
+def thumb_candidate_keys(image_key: Optional[str]):
+    """Para uma imagem original, retorna candidatos de thumb (.jpg e .png)."""
     if not image_key:
-        return None
+        return []
     base = image_key.split("/")[-1]
     name_noext = base.rsplit(".", 1)[0]
-    return f"thumb/{name_noext}.jpg"
+    return [f"thumb/{name_noext}.jpg", f"thumb/{name_noext}.png"]
 
 def enqueue_image(s3_key: str, book_id: Optional[int] = None):
     """
-    Publica uma mensagem na SQS para o worker processar a imagem.
+    Publica mensagem na SQS para o worker processar a imagem.
     Formato esperado pelo worker: {"bucket": ..., "key": ...}
-    (book_id é opcional — útil para auditoria/trace)
     """
-    payload = {
-        "bucket": S3_BUCKET,
-        "key": s3_key,
-    }
+    payload = {"bucket": S3_BUCKET, "key": s3_key}
     if book_id is not None:
         payload["book_id"] = str(book_id)
 
     try:
-        sqs.send_message(
-            QueueUrl=QUEUE_URL,
-            MessageBody=json.dumps(payload)
-        )
+        sqs.send_message(QueueUrl=QUEUE_URL, MessageBody=json.dumps(payload))
     except (BotoCoreError, ClientError) as e:
-        # Não quebra o fluxo do usuário; só registra um aviso
         log_audit("SQS_PUBLISH_ERROR", {"error": str(e), "payload": payload})
-        # opcional: mostre um aviso na UI
-        # flash("Aviso: não foi possível enfileirar o processamento da imagem. Tente novamente.", "warning")
 
 # ---------- App ----------
 app = Flask(__name__)
 app.secret_key = os.urandom(16)
 
-# Health (opcional para checagem rápida)
+# Health (opcional)
 @app.route("/health")
 def health():
     return {"ok": True}, 200
@@ -102,20 +91,17 @@ def index():
         cur.execute("SELECT * FROM books ORDER BY id DESC")
         books = cur.fetchall()
 
-    # mapa id -> URL (assinada) da thumb, se existir
-    thumbs: dict[int, str] = {}
+    # id -> URL (assinada) da thumb, se existir
+    thumbs = {}
 
     for b in books:
-        tkey = thumb_from(b.get("image_key"))
-        if not tkey:
-            continue
-        try:
-            # se o objeto existe, gera URL assinada para exibir
-            s3.head_object(Bucket=S3_BUCKET, Key=tkey)
-            thumbs[b["id"]] = s3_presigned_url(S3_BUCKET, tkey, 60)
-        except s3.exceptions.ClientError:
-            # ainda não processou — deixa sem URL
-            pass
+        for tkey in thumb_candidate_keys(b.get("image_key")):
+            try:
+                s3.head_object(Bucket=S3_BUCKET, Key=tkey)
+                thumbs[b["id"]] = s3_presigned_url(S3_BUCKET, tkey, 60)
+                break  # achou uma, sai
+            except s3.exceptions.ClientError:
+                continue
 
     return render_template("index.html", books=books, thumbs=thumbs)
 
@@ -136,10 +122,7 @@ def create_book():
     file = request.files.get("image")
     if file and file.filename:
         image_key = f"uploads/{uuid.uuid4().hex}_{file.filename.replace(' ', '_')}"
-        s3.upload_fileobj(
-            file, S3_BUCKET, image_key,
-            ExtraArgs={"ContentType": file.mimetype}
-        )
+        s3.upload_fileobj(file, S3_BUCKET, image_key, ExtraArgs={"ContentType": file.mimetype})
 
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -149,7 +132,6 @@ def create_book():
         )
         book_id = cur.fetchone()["id"]
 
-    # dispara processamento assíncrono da thumb via SQS
     if image_key:
         enqueue_image(image_key, book_id=book_id)
 
@@ -168,20 +150,15 @@ def show_book(book_id):
 
     thumb_url = None
     if book and book.get("image_key"):
-        tkey = thumb_from(book["image_key"])
-        if tkey:
+        for tkey in thumb_candidate_keys(book["image_key"]):
             try:
                 s3.head_object(Bucket=S3_BUCKET, Key=tkey)
                 thumb_url = s3_presigned_url(S3_BUCKET, tkey, 60)
+                break
             except s3.exceptions.ClientError:
-                thumb_url = None
+                continue
 
-    return render_template(
-        "book_detail.html",
-        book=book,
-        rentals=rentals,
-        thumb_url=thumb_url
-    )
+    return render_template("book_detail.html", book=book, rentals=rentals, thumb_url=thumb_url)
 
 # Edit form
 @app.route("/books/<int:book_id>/edit")
@@ -202,10 +179,7 @@ def update_book(book_id):
     file = request.files.get("image")
     if file and file.filename:
         new_key = f"uploads/{uuid.uuid4().hex}_{file.filename.replace(' ', '_')}"
-        s3.upload_fileobj(
-            file, S3_BUCKET, new_key,
-            ExtraArgs={"ContentType": file.mimetype}
-        )
+        s3.upload_fileobj(file, S3_BUCKET, new_key, ExtraArgs={"ContentType": file.mimetype})
 
     with db_conn() as conn, conn.cursor() as cur:
         if new_key:
