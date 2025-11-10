@@ -1,32 +1,40 @@
 <!doctype html>
-<html>
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <title>Biblioteca na Nuvem</title>
-  <link rel="stylesheet" href="https://unpkg.com/missing.css@1.1.3">
+  <title>📚 Biblioteca na Nuvem</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    .messages { list-style: none; padding-left: 0; }
-    .messages li { padding: 8px 12px; margin: 6px 0; border-radius: 6px; }
-    .messages .success { background:#e6ffed; }
-    .messages .info    { background:#eef6ff; }
-    .messages .error   { background:#ffecec; }
-    .button { margin-right: 4px; }
     img.thumb { height:60px; border-radius:6px; }
+    .table-responsive { margin-top: 20px; }
   </style>
 </head>
-<body class="container">
-<header><h1>📚 Biblioteca na Nuvem</h1></header>
+<body class="bg-light">
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-{% if messages %}
-<ul class="messages">
-  {% for cat, msg in messages %}
-  <li class="{{ cat }}">{{ msg }}</li>
-  {% endfor %}
-</ul>
-{% endif %}
-{% endwith %}
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+  <div class="container">
+    <a class="navbar-brand" href="{{ url_for('index') }}">📚 Biblioteca na Nuvem</a>
+  </div>
+</nav>
 
-{% block content %}{% endblock %}
+<div class="container mt-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="mb-3">
+      {% for cat, msg in messages %}
+      <div class="alert alert-{{ 'success' if cat == 'success' else 'danger' if cat == 'error' else 'info' }} alert-dismissible fade show" role="alert">
+        {{ msg }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
+
