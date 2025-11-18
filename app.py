@@ -8,7 +8,7 @@ import psycopg2.extras
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-# ---------- Config ----------
+# Configurações
 DB = {
     "host": os.environ["RDS_HOST"],
     "dbname": os.environ["RDS_DB"],
@@ -20,14 +20,13 @@ DB = {
 AWS_REGION   = os.getenv("AWS_REGION", "us-east-1")
 S3_BUCKET    = os.environ["S3_BUCKET"]
 DDB_AUDIT    = os.getenv("DDB_AUDIT", "kcl-AuditLogs")
-QUEUE_URL    = os.environ["QUEUE_URL"]  # URL completa da SQS (não é ARN)
+QUEUE_URL    = os.environ["QUEUE_URL"]
 
 s3       = boto3.client("s3", region_name=AWS_REGION)
 sqs      = boto3.client("sqs", region_name=AWS_REGION)
 dynamo   = boto3.resource("dynamodb", region_name=AWS_REGION)
 audit_tbl = dynamo.Table(DDB_AUDIT)
 
-# ---------- Helpers ----------
 def db_conn():
     return psycopg2.connect(
         cursor_factory=psycopg2.extras.RealDictCursor, **DB
@@ -64,7 +63,6 @@ def thumb_candidate_keys(image_key: Optional[str]):
 def enqueue_image(s3_key: str, book_id: Optional[int] = None):
     """
     Publica mensagem na SQS para o worker processar a imagem.
-    Formato esperado pelo worker: {"bucket": ..., "key": ...}
     """
     payload = {"bucket": S3_BUCKET, "key": s3_key}
     if book_id is not None:
@@ -75,11 +73,10 @@ def enqueue_image(s3_key: str, book_id: Optional[int] = None):
     except (BotoCoreError, ClientError) as e:
         log_audit("SQS_PUBLISH_ERROR", {"error": str(e), "payload": payload})
 
-# ---------- App ----------
+# Aplicação
 app = Flask(__name__)
 app.secret_key = os.urandom(16)
 
-# Health (opcional)
 @app.route("/health")
 def health():
     return {"ok": True}, 200
@@ -99,7 +96,7 @@ def index():
             try:
                 s3.head_object(Bucket=S3_BUCKET, Key=tkey)
                 thumbs[b["id"]] = s3_presigned_url(S3_BUCKET, tkey, 60)
-                break  # achou uma, sai
+                break
             except s3.exceptions.ClientError:
                 continue
 
@@ -110,7 +107,7 @@ def index():
 def new_book():
     return render_template("book_form.html", book=None)
 
-# Create
+# Create novo livro
 @app.route("/books", methods=["POST"])
 def create_book():
     code    = request.form["code"].strip()
@@ -139,7 +136,7 @@ def create_book():
     flash("Livro criado!", "success")
     return redirect(url_for("index"))
 
-# Show
+# Mostrar Livro
 @app.route("/books/<int:book_id>")
 def show_book(book_id):
     with db_conn() as conn, conn.cursor() as cur:
@@ -160,7 +157,7 @@ def show_book(book_id):
 
     return render_template("book_detail.html", book=book, rentals=rentals, thumb_url=thumb_url)
 
-# Edit form
+# Edit
 @app.route("/books/<int:book_id>/edit")
 def edit_book(book_id):
     with db_conn() as conn, conn.cursor() as cur:
@@ -209,7 +206,7 @@ def delete_book(book_id):
     flash("Livro removido.", "info")
     return redirect(url_for("index"))
 
-# --- Aluguéis ---
+# Aluguéis
 @app.route("/rentals/<int:book_id>/new", methods=["POST"])
 def rent_book(book_id):
     renter = request.form["renter"].strip()
@@ -238,5 +235,4 @@ def return_rental(rental_id):
     return redirect(url_for("show_book", book_id=book_id))
 
 if __name__ == "__main__":
-    # para testes locais; em produção use gunicorn/uwsgi
     app.run(host="0.0.0.0", port=5000)
