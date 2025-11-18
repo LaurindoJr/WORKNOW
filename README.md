@@ -1,4 +1,93 @@
-# 📄 Implementação de Aplicação Elástica na AWS - KCL
+# 📚 Biblioteca na Nuvem – KCL
+### Aplicação Web + Processamento Assíncrono + Arquitetura Elástica
+*(EC2 | RDS | S3 | DynamoDB | SQS | ALB | ASG | CloudWatch)*
+
+---
+
+# 🚀 Parte 1 — Arquitetura da Aplicação
+
+A aplicação "Biblioteca na Nuvem – KCL" utiliza cinco serviços principais da AWS para fornecer um ambiente escalável, desacoplado e resiliente.
+
+---
+
+## **1️⃣ Interface Web (Flask em EC2)**
+
+A aplicação web foi desenvolvida em **Flask** e é executada em uma instância **EC2**.
+
+**Funções principais:**
+- Interface web para cadastrar, editar, excluir e listar livros.
+- Registro de aluguéis (rentals).
+- Upload de imagens dos livros para o S3.
+
+**👉 Serviço AWS utilizado:** **EC2**  
+**👉 Função:** Hospedar e executar o backend e o frontend.
+
+---
+
+## **2️⃣ Banco de Dados Relacional — Amazon RDS (PostgreSQL)**
+
+Todas as informações estruturadas da aplicação são persistidas em um banco relacional:
+
+- Tabela **books**
+- Tabela **rentals**
+
+O Flask realiza operações CRUD diretamente no banco.
+
+**👉 Serviço AWS utilizado:** **RDS (PostgreSQL)**  
+**👉 Função:** Armazenamento persistente dos dados dos livros e aluguéis.
+
+---
+
+## **3️⃣ Armazenamento de Arquivos — Amazon S3**
+
+As imagens enviadas na aplicação são armazenadas no bucket S3:
+
+- Upload original em `uploads/`
+- Thumbnail gerada automaticamente em `thumb/`
+
+**👉 Serviço AWS utilizado:** **S3**  
+**👉 Função:** Armazenamento dos arquivos binários (imagens).
+
+---
+
+## **4️⃣ Processamento Assíncrono — Amazon SQS + Worker**
+
+Sempre que uma imagem é enviada, o Flask publica uma mensagem na fila **SQS**:
+
+{"bucket": "biblioteca-kcl", "key": "uploads/dom.jpg"}
+
+Um worker Python (`sqs_worker.py`) lê esta mensagem e executa:
+
+1. **Baixa a imagem do S3**
+2. **Gera a miniatura (thumbnail)**
+3. **Salva no S3** (`thumb/...`)
+4. **Atualiza tabela `ProcessingStatus` no DynamoDB**
+5. **Cria log** na tabela `kcl-AuditLogs`
+
+👉 **Serviço AWS utilizado:** SQS  
+👉 **Função:** Desacoplar o upload da imagem do processamento (pipeline assíncrono).
+
+---
+
+## **5️⃣ Banco NoSQL — Amazon DynamoDB**
+
+O DynamoDB é usado para armazenar logs e status de processamento.
+
+### 📌 **Tabela 1 — `kcl-AuditLogs`**
+- `pk`: `APP#CREATE` | `APP#UPDATE` | `APP#DELETE`
+- `sk`: UUID
+- `data`: JSON com os dados alterados
+- `ts`: timestamp ISO-8601
+
+### 📌 **Tabela 2 — `ProcessingStatus`**
+- `pk`: caminho do arquivo
+- `status`: `PENDING` | `DONE` | `ERROR`
+- `message`: detalhes do processamento
+
+👉 **Serviço AWS utilizado:** DynamoDB  
+👉 **Função:** Logs de auditoria + monitoramento do pipeline de imagens.
+
+# Parte 2 - Implementação de Aplicação Elástica na AWS - KCL
 
 
 ### Link do vídeo da aplicação sendo executada:
